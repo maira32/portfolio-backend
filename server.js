@@ -1,40 +1,33 @@
-// server.js
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { Resend } = require('resend');
 
 const app = express();
+app.use(cors());
+app.use(express.json());
 
-// Middleware
-app.use(cors()); // Allows your React frontend to connect
-app.use(express.json()); // Allows the server to read JSON data from React
-
-// --- IN-MEMORY DATABASES (For learning purposes) ---
 const usersDB = [];
-const messagesDB = [];
 
-// A secret key for generating tokens (In a real app, this goes in a .env file)
-const JWT_SECRET = 'my_super_secret_key_123';
+const resend = new Resend(process.env.RESEND_API_KEY);
+const JWT_SECRET = process.env.JWT_SECRET || 'my_super_secret_key_123';
 
-// ==========================================
-// API ENDPOINTS
-// ==========================================
+app.get('/', (req, res) => {
+  res.send('Portfolio API is running! Auth and Email routes are active.');
+});
 
-// 1. SIGNUP API
+
 app.post('/api/signup', async (req, res) => {
   const { name, email, password } = req.body;
 
-  // Check if user already exists in our "database"
   const existingUser = usersDB.find(u => u.email === email);
   if (existingUser) {
     return res.status(400).json({ message: 'User already exists with this email.' });
   }
 
-  // Hash the password securely
   const hashedPassword = await bcrypt.hash(password, 10);
-
-  // Save the user
   const newUser = { id: Date.now(), name, email, password: hashedPassword };
   usersDB.push(newUser);
 
@@ -42,27 +35,23 @@ app.post('/api/signup', async (req, res) => {
   res.status(201).json({ message: 'User created successfully!' });
 });
 
-// 2. LOGIN API
+
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
 
-  // Find the user in the database
   const user = usersDB.find(u => u.email === email);
   if (!user) {
     return res.status(401).json({ message: 'Invalid email or password.' });
   }
 
-  // Compare the password sent from React with the hashed password in DB
   const isPasswordValid = await bcrypt.compare(password, user.password);
   if (!isPasswordValid) {
     return res.status(401).json({ message: 'Invalid email or password.' });
   }
 
-  // If successful, create a JWT Token
   const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '1h' });
 
   console.log('User Logged In:', email);
-  // Send the token back to React!
   res.status(200).json({ 
     message: 'Login successful', 
     token: token,
@@ -70,23 +59,39 @@ app.post('/api/login', async (req, res) => {
   });
 });
 
-// 3. CONTACT FORM API
-app.post('/api/contact', (req, res) => {
-  const { name, email, message } = req.body;
 
-  // Save the message to our "database"
-  messagesDB.push({ id: Date.now(), name, email, message });
-  
-  console.log(`New Message from ${name} (${email}): ${message}`);
-  res.status(200).json({ message: 'Message received successfully!' });
-});
+app.post('/api/contact', async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
 
-// ==========================================
-// START SERVER
-// ==========================================
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+    const { data, error } = await resend.emails.send({
+      from: 'Portfolio Contact Form <onboarding@resend.dev>',
+      to: 'mairatahir3@gmail.com', 
+      subject: `New Portfolio Message from ${name}`,
+      html: `
+        <div style="font-family: sans-serif; padding: 20px;">
+            <h2 style="color: #f97316;">New Contact Form Submission</h2>
+            <p><strong>Name:</strong> ${name}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <br/>
+            <p><strong>Message:</strong></p>
+            <p style="background-color: #f3f4f6; padding: 15px; border-radius: 8px;">${message}</p>
+        </div>
+      `
+    });
+
+    if (error) {
+      console.error('Resend Error:', error);
+      return res.status(400).json({ message: 'Failed to send email.' });
+    }
+
+    console.log(`Email successfully sent to you from ${name}!`);
+    res.status(200).json({ message: 'Message received successfully!' });
+
+  } catch (error) {
+    console.error('Server Error:', error);
+    res.status(500).json({ message: 'Server error.' });
+  }
 });
 
 module.exports = app;
